@@ -1,9 +1,14 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
+
 $server_start = microtime(true);
 
 // Prevent direct access unless testing.
-if (getenv('PHP_CURL_CLASS_TEST_MODE_ENABLED') !== 'yes' &&
-    @$_SERVER['PHP_CURL_CLASS_TEST_MODE_ENABLED'] !== 'yes') {
+if (
+    getenv('PHP_CURL_CLASS_TEST_MODE_ENABLED') !== 'yes' &&
+    @$_SERVER['PHP_CURL_CLASS_TEST_MODE_ENABLED'] !== 'yes'
+) {
     exit;
 }
 
@@ -11,18 +16,16 @@ require_once 'ContentRangeServer.php';
 require_once 'RangeHeader.php';
 require_once 'Helper.php';
 
-use Helper\Test;
-
 $http_raw_post_data = file_get_contents('php://input');
 $_PUT = [];
 $_PATCH = [];
 $_DELETE = [];
 
-$request_method = isset($_SERVER['REQUEST_METHOD']) ? $_SERVER['REQUEST_METHOD'] : '';
+$request_method = $_SERVER['REQUEST_METHOD'] ?? '';
 if (!array_key_exists('CONTENT_TYPE', $_SERVER) && array_key_exists('HTTP_CONTENT_TYPE', $_SERVER)) {
     $_SERVER['CONTENT_TYPE'] = $_SERVER['HTTP_CONTENT_TYPE'];
 }
-$content_type = isset($_SERVER['CONTENT_TYPE']) ? $_SERVER['CONTENT_TYPE'] : '';
+$content_type = $_SERVER['CONTENT_TYPE'] ?? '';
 $data_values = $_GET;
 if ($request_method === 'POST') {
     $data_values = $_POST;
@@ -49,7 +52,7 @@ if (isset($_SERVER['HTTP_X_DEBUG_TEST'])) {
 } elseif (isset($_GET['test'])) {
     $test = $_GET['test'];
 }
-$key = isset($data_values['key']) ? $data_values['key'] : '';
+$key = $data_values['key'] ?? '';
 
 if ($test === 'http_basic_auth') {
     if (!isset($_SERVER['PHP_AUTH_USER'])) {
@@ -146,12 +149,12 @@ if ($test === 'http_basic_auth') {
     ]);
     exit;
 } elseif ($test === 'post_file_path_upload') {
-    echo Helper\mime_type($_FILES[$key]['tmp_name']);
+    echo \Helper\mime_type($_FILES[$key]['tmp_name']);
     exit;
 } elseif ($test === 'put_file_handle') {
     $tmp_filename = tempnam('/tmp', 'php-curl-class.');
     file_put_contents($tmp_filename, $http_raw_post_data);
-    echo Helper\mime_type($tmp_filename);
+    echo \Helper\mime_type($tmp_filename);
     unlink($tmp_filename);
     exit;
 } elseif ($test === 'request_method') {
@@ -181,22 +184,49 @@ if ($test === 'http_basic_auth') {
     echo 'OK';
     exit;
 } elseif ($test === 'json_response') {
-    if ($request_method === 'POST') {
-        $key = $_POST['key'];
-        $value = $_POST['value'];
-        header($key . ': ' . $value);
+    if (isset($_POST['headers'])) {
+        foreach ($_POST['headers'] as $header) {
+            header($header);
+        }
     } else {
-        header('Content-Type: application/json');
+        if (isset($_POST['key'])) {
+            $key = $_POST['key'];
+        } elseif (isset($_GET['key'])) {
+            $key = $_GET['key'];
+        } else {
+            $key = 'Content-Type';
+        }
+
+        if (isset($_POST['value'])) {
+            $value = $_POST['value'];
+        } elseif (isset($_GET['value'])) {
+            $value = $_GET['value'];
+        } else {
+            $value = 'application/json';
+        }
+
+        header($key . ': ' . $value);
     }
-    echo json_encode([
-        'null' => null,
-        'true' => true,
-        'false' => false,
-        'integer' => 1,
-        'float' => 3.14,
-        'empty' => '',
-        'string' => 'string',
-    ]);
+
+    if (isset($_POST['body'])) {
+        $body = $_POST['body'];
+    } else {
+        $body = json_encode([
+            'null' => null,
+            'true' => true,
+            'false' => false,
+            'integer' => 1,
+            'float' => 3.14,
+            'empty' => '',
+            'string' => 'string',
+        ]);
+    }
+
+    if (isset($_POST['remove-content-type-header'])) {
+        header_remove('Content-Type');
+    }
+
+    echo $body;
     exit;
 } elseif ($test === 'xml_response') {
     $key = $_POST['key'];
@@ -258,15 +288,19 @@ if ($test === 'http_basic_auth') {
     $unsafe_file_path = $_GET['file_path'];
     header('Content-Type: image/png');
     header('Content-Disposition: attachment; filename="image.png"');
-    header('Content-Length: ' . filesize($unsafe_file_path));
-    header('ETag: ' . md5_file($unsafe_file_path));
-    readfile($unsafe_file_path);
+
+    if (!isset($_SERVER['HTTP_RANGE'])) {
+        header('ETag: ' . md5_file($unsafe_file_path));
+    }
+
+    $server = new ContentRangeServer\ContentRangeServer();
+    $server->serve($unsafe_file_path);
     exit;
 } elseif ($test === 'download_file_size') {
     if (isset($_GET['http_response_code'])) {
         http_response_code((int) $_GET['http_response_code']);
     }
-    $bytes = isset($_GET['bytes']) ? $_GET['bytes'] : 1234;
+    $bytes = $_GET['bytes'] ?? 1234;
     $str = str_repeat('.', (int) $bytes);
     header('Content-Type: application/octet-stream');
     header('Content-Length: ' . strlen($str));
@@ -352,25 +386,50 @@ if ($test === 'http_basic_auth') {
 } elseif ($test === 'retry') {
     session_start();
 
-    if (isset($_SESSION['failures_remaining'])) {
-        $failures_remaining = $_SESSION['failures_remaining'];
+    if (isset($_SESSION['should_fail_entries'])) {
+        $should_fail_entries = $_SESSION['should_fail_entries'];
     } else {
-        $failures_remaining = (int)$_GET['failures'];
-        $_SESSION['failures_remaining'] = $failures_remaining;
+        // Support specifying which requests fail and succeed (e.g.
+        // http://127.0.0.1:8000/?failures=1,1,0 to fail, fail, succeed).
+        if (strpos($_GET['failures'], ',') !== false) {
+            $should_fail_entries = explode(',', $_GET['failures']);
+            array_walk($should_fail_entries, function (&$value, $key) {
+                if ($value === '1') {
+                    $value = true;
+                } elseif ($value === '0') {
+                    $value = false;
+                } else {
+                    $value = '';
+                }
+            });
+
+        // Support specifying the number of failures before a success (e.g.
+        // http://127.0.0.1:8000/?failures=3).
+        } else {
+            $failure_count = (int)$_GET['failures'];
+            $should_fail_entries = array_fill(0, $failure_count, true);
+            $should_fail_entries[] = false;
+        }
     }
 
-    if ($failures_remaining >= 1) {
-        $_SESSION['failures_remaining'] -= 1;
+    $should_fail = array_shift($should_fail_entries);
+    $_SESSION['should_fail_entries'] = $should_fail_entries;
 
-        header('HTTP/1.1 503 Service Unavailable');
-        echo 'Service Unavailable';
-        echo ' (remaining failures: ' . $_SESSION['failures_remaining'] . ')';
-        exit;
+    if ($should_fail) {
+        $message = '503 Service Unavailable';
+    } else {
+        $message = '202 Accepted';
     }
 
-    header('HTTP/1.1 202 Accepted');
-    echo '202 Accepted';
-    echo ' (remaining failures: ' . $_SESSION['failures_remaining'] . ')';
+    $response = json_encode([
+        'message' => $message,
+        'remaining_should_fail_entries' => $_SESSION['should_fail_entries'],
+    ], JSON_PRETTY_PRINT);
+
+    header('HTTP/1.1 ' . $message);
+    header('Content-Type: application/json');
+    header('Content-Length: ' . strlen($response));
+    echo $response;
     exit;
 } elseif ($test === '404') {
     header('HTTP/1.1 404 Not Found');
@@ -397,7 +456,7 @@ if (!empty($test)) {
         $value = http_build_query($data);
     } else {
         // Return individual value when a key is specified.
-        $value = isset($data[$key]) ? $data[$key] : '';
+        $value = $data[$key] ?? '';
     }
     echo $value;
 }

@@ -69,49 +69,17 @@ if [[ ! -z "${invalid_indentation}" ]]; then
 fi
 
 # Prohibit trailing whitespace in php files.
-trailing_whitespace=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec egrep --color=always --line-number -H " +$" {} \;)
+trailing_whitespace=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec grep --color=always --extended-regexp --line-number -H " +$" {} \;)
 if [[ ! -z "${trailing_whitespace}" ]]; then
     result="$(echo -e "${trailing_whitespace}" | perl -pe 's/^(.*)$/Trailing whitespace found in \1/')"
     echo "${result}"
     errors+=("${result}")
 fi
 
-# Prohibit long lines in php files.
-long_lines=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" ! -path "*/www/*" -exec awk '{print FILENAME":"NR" "length}' {} \; | awk '$2 > 120')
-if [[ ! -z "${long_lines}" ]]; then
-    result="$(echo -e "${long_lines}" | perl -pe 's/^(.*)$/Long lines found in \1/')"
-    echo "${result}"
-    errors+=("${result}")
-fi
-
-# Prohibit @author in php files.
-at_author=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec egrep --color=always --line-number -H "@author" {} \;)
-if [[ ! -z "${at_author}" ]]; then
-    result="$(echo -e "${at_author}" | perl -pe 's/^(.*)$/\@author found in \1/')"
-    echo "${result}"
-    errors+=("${result}")
-fi
-
-# Prohibit screaming caps notation in php files.
-caps=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec egrep --color=always --line-number -H -e "FALSE[^']" -e "NULL" -e "TRUE" {} \;)
-if [[ ! -z "${caps}" ]]; then
-    result="$(echo -e "${caps}" | perl -pe 's/^(.*)$/All caps found in \1/')"
-    echo "${result}"
-    errors+=("${result}")
-fi
-
 # Require identical comparison operators (===, not ==) in php files.
-equal=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec egrep --color=always --line-number -H "[^!=]==[^=]" {} \;)
+equal=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec grep --color=always --extended-regexp --line-number -H "[^!=]==[^=]" {} \;)
 if [[ ! -z "${equal}" ]]; then
     result="$(echo -e "${equal}" | perl -pe 's/^(.*)$/Non-identical comparison operator found in \1/')"
-    echo "${result}"
-    errors+=("${result}")
-fi
-
-# Require keyword "elseif" to be used instead of "else if" so that all control keywords look like single words.
-elseif=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec egrep --color=always --line-number -H "else\s+if" {} \;)
-if [[ ! -z "${elseif}" ]]; then
-    result="$(echo -e "${elseif}" | perl -pe 's/^(.*)$/Found "else if" instead of "elseif" in \1/')"
     echo "${result}"
     errors+=("${result}")
 fi
@@ -124,31 +92,44 @@ if [[ ! -z "${elses}" ]]; then
     errors+=("${result}")
 fi
 
-# Prohibit use of "is_null" and suggest using the strict comparison operator.
-is_null=$(find . -type "f" -iname "*.php" ! -path "*/vendor/*" -exec grep --color=always --line-number -H -e "is_null" {} \;)
-if [[ ! -z "${is_null}" ]]; then
-    result="$(echo -e "${is_null}" | perl -pe 's/^(.*)$/is_null found in \1.  Replace with strict comparison (e.g. "\$x === null")./')"
-    echo "${result}"
-    errors+=("${result}")
-fi
-
-# Determine which phpcs to use.
-if [[ -f "vendor/bin/phpcs" ]]; then
-    phpcs_to_use="vendor/bin/phpcs"
+# Run PHP_CodeSniffer.
+if   [[ "${CI_PHP_VERSION}" == "7.0" ]]; then :
+elif [[ "${CI_PHP_VERSION}" == "7.1" ]]; then :
 else
-    phpcs_to_use="phpcs"
+
+    # Determine which phpcs to use.
+    if [[ -f "vendor/bin/phpcs" ]]; then
+        phpcs_to_use="vendor/bin/phpcs"
+    else
+        phpcs_to_use="phpcs"
+    fi
+
+    # Detect coding standard violations.
+    "${phpcs_to_use}" --version
+    "${phpcs_to_use}" \
+        --extensions="php" \
+        --ignore="*/vendor/*" \
+        --standard="tests/ruleset.xml" \
+        -p \
+        -s \
+        .
+    if [[ "${?}" -ne 0 ]]; then
+        echo "Error: found PHP_CodeSniffer coding standard violation(s)"
+        errors+=("found PHP_CodeSniffer coding standard violation(s)")
+    fi
+
 fi
 
-# Detect coding standard violations.
-"${phpcs_to_use}" --version
-"${phpcs_to_use}" \
-    --extensions="php" \
-    --ignore="*/vendor/*" \
-    --standard="tests/ruleset.xml" \
-    -p \
-    -s \
-    .
-if [[ "${?}" -ne 0 ]]; then
-    echo "Error: found standard violation(s)"
-    errors+=("found standard violation(s)")
+# Run PHP-CS-Fixer.
+if   [[ "${CI_PHP_VERSION}" == "7.0" ]]; then :
+elif [[ "${CI_PHP_VERSION}" == "7.1" ]]; then :
+elif [[ "${CI_PHP_VERSION}" == "7.2" ]]; then :
+elif [[ "${CI_PHP_VERSION}" == "7.3" ]]; then :
+else
+    vendor/bin/php-cs-fixer --version
+    vendor/bin/php-cs-fixer fix --ansi --config="tests/.php-cs-fixer.php" --diff --dry-run
+    if [[ "${?}" -ne 0 ]]; then
+        echo "Error: found PHP-CS-Fixer coding standard violation(s)"
+        errors+=("found PHP-CS-Fixer coding standard violation(s)")
+    fi
 fi

@@ -1,6 +1,12 @@
+#!/usr/bin/env bash
+
 remove_expectWarning() {
     # Fix "Call to undefined method CurlTest\CurlTest::expectWarning()".
-    sed -i'' -e"/->expectWarning(/d" "./PHPCurlClass/PHP"*
+    if sed v < /dev/null 2> /dev/null; then
+        sed -i"" -e "/->expectWarning(/d" "./PHPCurlClass/PHP"*
+    else
+        sed -i "" -e "/->expectWarning(/d" "./PHPCurlClass/PHP"*
+    fi
 }
 
 replace_assertStringContainsString() {
@@ -8,19 +14,46 @@ replace_assertStringContainsString() {
     # +->assertContains(
     find='->assertStringContainsString('
     replace='->assertContains('
-    sed -i'' -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    if sed v < /dev/null 2> /dev/null; then
+        sed -i"" -e "s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    else
+        sed -i "" -e "s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    fi
+}
+
+replace_assertMatchesRegularExpression() {
+    # -->assertMatchesRegularExpression(
+    # +->assertRegExp(
+    find='->assertMatchesRegularExpression('
+    replace='->assertRegExp('
+    if sed v < /dev/null 2> /dev/null; then
+        sed -i"" -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    else
+        sed -i "" -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    fi
 }
 
 phpunit_v6_5_shim() {
     remove_expectWarning
+    replace_assertMatchesRegularExpression
     replace_assertStringContainsString
 }
 
 phpunit_v7_5_shim() {
     remove_expectWarning
+    replace_assertMatchesRegularExpression
 }
 
-phpunit_v8_1_shim() {
+phpunit_v8_5_shim() {
+    remove_expectWarning
+    replace_assertMatchesRegularExpression
+}
+
+phpunit_v9_shim() {
+    replace_assertMatchesRegularExpression
+}
+
+phpunit_v10_shim() {
     remove_expectWarning
 }
 
@@ -29,7 +62,11 @@ php_v7_0_shim() {
     # +protected function setUp()
     find='protected function setUp(): void'
     replace='protected function setUp()'
-    sed -i'' -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    if sed v < /dev/null 2> /dev/null; then
+        sed -i"" -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    else
+        sed -i "" -e"s/${find}/${replace}/" "./PHPCurlClass/PHP"*
+    fi
 }
 
 set -x
@@ -56,7 +93,7 @@ for i in $(seq 0 $(("${server_count}" - 1))); do
     port=8000
     (( port += $i ))
 
-    php -S "127.0.0.1:${port}" -t PHPCurlClass/ &> /dev/null &
+    php -S "127.0.0.1:${port}" server.php &> /dev/null &
     pids["${i}"]="${!}"
 done
 
@@ -74,12 +111,22 @@ fi
 phpunit_version="$("${phpunit_to_use}" --version | grep -Eo "[0-9]+\.[0-9]+\.[0-9]+")"
 echo "phpunit_version: ${phpunit_version}"
 
+extra_args="${@}"
 if [[ "${phpunit_version}" == "6.5."* ]]; then
     phpunit_v6_5_shim
+    phpunit_args=" --debug --verbose --fail-on-risky ${extra_args}"
 elif [[ "${phpunit_version}" == "7.5."* ]]; then
     phpunit_v7_5_shim
-elif [[ "${phpunit_version}" == "8.1."* ]]; then
-    phpunit_v8_1_shim
+    phpunit_args=" --debug --verbose --fail-on-risky ${extra_args}"
+elif [[ "${phpunit_version}" == "8.5."* ]]; then
+    phpunit_v8_5_shim
+    phpunit_args=" --debug --verbose --fail-on-risky ${extra_args}"
+elif [[ "${phpunit_version}" == "9."* ]]; then
+    phpunit_v9_shim
+    phpunit_args=" --debug --verbose --fail-on-risky ${extra_args}"
+elif [[ "${phpunit_version}" == "10."* ]]; then
+    phpunit_v10_shim
+    phpunit_args=" --display-incomplete --display-skipped --display-deprecations --display-errors --display-notices --display-warnings --fail-on-risky ${extra_args}"
 fi
 
 if [[ "${CI_PHP_VERSION}" == "7.0" ]]; then
@@ -87,13 +134,10 @@ if [[ "${CI_PHP_VERSION}" == "7.0" ]]; then
 fi
 
 # Run tests.
-extra_args="${@}"
 "${phpunit_to_use}" --version
 "${phpunit_to_use}" \
     --configuration "phpunit.xml" \
-    --debug \
-    --verbose \
-    ${extra_args}
+    ${phpunit_args}
 if [[ "${?}" -ne 0 ]]; then
     echo "Error: phpunit command failed"
     errors+=("phpunit command failed")
@@ -123,5 +167,5 @@ done
 if [[ "${CI_PHP_FUTURE_RELEASE}" != "true" ]]; then
     exit "${#errors[@]}"
 elif [[ "${#errors[@]}" -ne 0 ]]; then
-    echo "One or more tests failed, but allowed as CI_PHP_FUTURE_RELEASE is on for PHP version ${CI_PHP_VERSION}."
+    echo "One or more tests failed, but allowed as the CI_PHP_FUTURE_RELEASE flag is on for PHP version ${CI_PHP_VERSION}."
 fi

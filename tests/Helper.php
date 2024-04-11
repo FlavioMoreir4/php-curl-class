@@ -1,4 +1,6 @@
-<?php declare(strict_types=1);
+<?php
+
+declare(strict_types=1);
 
 namespace Helper;
 
@@ -12,6 +14,8 @@ class Test
     public $message;
 
     private $testUrl;
+
+    public $curl;
 
     public function __construct($port = null)
     {
@@ -123,7 +127,8 @@ function mime_type($file_path)
     return $mime_type;
 }
 
-function upload_file_to_server($upload_file_path) {
+function upload_file_to_server($upload_file_path)
+{
     $upload_test = new Test();
     $upload_test->server('upload_response', 'POST', [
         'image' => '@' . $upload_file_path,
@@ -139,7 +144,8 @@ function upload_file_to_server($upload_file_path) {
     return $uploaded_file_path;
 }
 
-function remove_file_from_server($uploaded_file_path) {
+function remove_file_from_server($uploaded_file_path)
+{
     $download_test = new Test();
 
     // Ensure file successfully removed.
@@ -189,7 +195,8 @@ function get_request_stats($request_stats, $multi_curl)
     return $request_stats;
 }
 
-function get_request_method($instance) {
+function get_request_method($instance)
+{
     $request_method = $instance->getOpt(CURLOPT_CUSTOMREQUEST);
 
     // POST requests have CURLOPT_CUSTOMREQUEST unset by default to allow
